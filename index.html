@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Демо-приложение для изучения веб-безопасности</title>
+    <meta charset="utf-8">
+</head>
+<body>
+    <h1>Добро пожаловать в наше учебное приложение</h1>
+
+    <div id="login">
+        <h2>Вход</h2>
+        <form method="POST" action="/login">
+            <label>Логин: <input type="text" name="username"></label><br>
+            <label>Пароль: <input type="password" name="password"></label><br>
+            <button type="submit">Войти</button>
+        </form>
+    </div>
+
+    <hr>
+
+    <div id="comments">
+        <h2>Комментарии</h2>
+        <form method="POST" action="/comment">
+            <label>Комментарий: <input type="text" name="comment"></label>
+            <button type="submit">Отправить</button>
+        </form>
+
+        <h3>Список комментариев:</h3>
+        <div id="comment-list"></div>
+    </div>
+
+    <script>
+        // Функция для загрузки комментариев с сервера
+        function loadComments() {
+            fetch('/comments')
+                .then(response => response.json())
+                .then(comments => {
+                    let html = '<ul>';
+                    for (let c of comments) {
+                        // УЯЗВИМОСТЬ: вставляем комментарий напрямую в HTML
+                        html += '<li>' + c + '</li>';
+                    }
+                    html += '</ul>';
+                    document.getElementById('comment-list').innerHTML = html;
+                });
+        }
+
+        // Загружаем комментарии при загрузке страницы
+        loadComments();
+    </script>
+</body>
+</html>
