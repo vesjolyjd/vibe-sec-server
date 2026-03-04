@@ -3,72 +3,108 @@ import http.server
 import socketserver
 import urllib.parse
 import json
+import hashlib
+import secrets
 
 PORT = 1234
 
-# Список комментариев (все хранятся в памяти)
 comments = []
-
-# Простейшая база пользователей (логин:пароль в открытом виде)
 users = {
-    "admin": "secret"
+    "admin": hashlib.sha256("secret".encode()).hexdigest()
 }
+sessions = {}   # session_id -> {"user": username, "csrf_token": token}
 
 class MyHandler(http.server.SimpleHTTPRequestHandler):
-    """Обработчик HTTP-запросов"""
+    
+    def send_security_headers(self):
+        self.send_header('X-Frame-Options', 'DENY') # Запрет встраивания в iframe
+        self.send_header('X-Content-Type-Options', 'nosniff') # Запрет MIME-сниффинга
+        self.send_header('Referrer-Policy', 'strict-origin-when-cross-origin') # Контроль реферера (другой origin - передаётся только сам origin, отмена http)
+        self.send_header('Content-Security-Policy', "default-src 'self'") # Все ресурсы могут загружаться только с того же источника
     
     def do_GET(self):
-        """Обрабатываем GET-запросы"""
         if self.path == '/':
-            # Отдаём главную страницу index.html
             self.send_response(200)
             self.send_header('Content-type', 'text/html')
+            self.send_security_headers()
             self.end_headers()
             with open('index.html', 'rb') as f:
-                self.wfile.write(f.read())
+                content = f.read()
+            # Извлекаем сессию из куки
+            cookies = self.headers.get('Cookie', '')
+            session_id = None
+            for cookie in cookies.split(';'):
+                if cookie.strip().startswith('session='):
+                    session_id = cookie.split('=')[1].strip()
+                    break
+            csrf_token = sessions.get(session_id, {}).get('csrf_token', '')
+            # Вставляем CSRF-токен в страницу
+            inject = f'<script>window.csrfToken = "{csrf_token}";</script>'
+            content = content.replace(b'</body>', inject.encode() + b'</body>')
+            self.wfile.write(content)
         elif self.path == '/comments':
-            # Отдаём список комментариев в формате JSON
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
+            self.send_security_headers()
             self.end_headers()
             self.wfile.write(json.dumps(comments).encode())
         else:
-            # Для всех остальных путей пытаемся отдать статический файл (не используется)
             super().do_GET()
-
+    
     def do_POST(self):
-        """Обрабатываем POST-запросы (отправка форм)"""
         global comments
-        # Читаем тело запроса (данные формы)
         content_length = int(self.headers.get('Content-Length', 0))
         post_data = self.rfile.read(content_length).decode('utf-8')
-        # Разбираем параметры из строки запроса
         params = urllib.parse.parse_qs(post_data)
-
+        
         if self.path == '/login':
-            # Обработка формы входа
             username = params.get('username', [''])[0]
             password = params.get('password', [''])[0]
-            if username in users and users[username] == password:
-                # Успешный вход: устанавливаем куку session
-                self.send_response(302)  # 302 Redirect
-                self.send_header('Set-Cookie', 'session=logged_in')
+            password_hash = hashlib.sha256(password.encode()).hexdigest()
+            if username in users and users[username] == password_hash:
+                session_id = secrets.token_urlsafe(16)
+                csrf_token = secrets.token_urlsafe(16)
+                sessions[session_id] = {"user": username, "csrf_token": csrf_token}
+                self.send_response(302)
+                self.send_header('Set-Cookie', f'session={session_id}; HttpOnly; SameSite=Lax') # Кука недоступна через JavaScript, не будет отправляться при кросс-сайтовых POST-запросах
                 self.send_header('Location', '/')
+                self.send_security_headers()
                 self.end_headers()
             else:
                 self.send_response(401)
+                self.send_security_headers()
                 self.end_headers()
                 self.wfile.write(b'Login failed')
         elif self.path == '/comment':
-            # Обработка добавления комментария
+            # Проверка сессии и CSRF-токена
+            cookies = self.headers.get('Cookie', '')
+            session_id = None
+            for cookie in cookies.split(';'):
+                if cookie.strip().startswith('session='):
+                    session_id = cookie.split('=')[1].strip()
+                    break
+            if not session_id or session_id not in sessions:
+                self.send_response(403)
+                self.send_security_headers()
+                self.end_headers()
+                self.wfile.write(b'Invalid session')
+                return
+            token_from_form = params.get('csrf_token', [''])[0]
+            if token_from_form != sessions[session_id]['csrf_token']:
+                self.send_response(403)
+                self.send_security_headers()
+                self.end_headers()
+                self.wfile.write(b'CSRF token mismatch')
+                return
             comment = params.get('comment', [''])[0]
-            # УЯЗВИМОСТЬ: сохраняем комментарий как есть, без проверок
             comments.append(comment)
             self.send_response(302)
             self.send_header('Location', '/')
+            self.send_security_headers()
             self.end_headers()
         else:
             self.send_response(404)
+            self.send_security_headers()
             self.end_headers()
 
 if __name__ == '__main__':

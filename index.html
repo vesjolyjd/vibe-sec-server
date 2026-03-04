@@ -1,11 +1,11 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Демо-приложение для изучения веб-безопасности</title>
+    <title>Демо-приложение (безопасная версия)</title>
     <meta charset="utf-8">
 </head>
 <body>
-    <h1>Добро пожаловать в наше учебное приложение</h1>
+    <h1>Добро пожаловать в учебное приложение</h1>
 
     <div id="login">
         <h2>Вход</h2>
@@ -21,7 +21,8 @@
     <div id="comments">
         <h2>Комментарии</h2>
         <form method="POST" action="/comment">
-            <label>Комментарий: <input type="text" name="comment"></label>
+            <input type="text" name="comment" placeholder="Комментарий">
+            <input type="hidden" name="csrf_token" id="csrf_token">
             <button type="submit">Отправить</button>
         </form>
 
@@ -30,22 +31,27 @@
     </div>
 
     <script>
-        // Функция для загрузки комментариев с сервера
+        // Устанавливаем CSRF-токен из глобальной переменной (переданной сервером)
+        document.getElementById('csrf_token').value = window.csrfToken || '';
+
         function loadComments() {
             fetch('/comments')
                 .then(response => response.json())
                 .then(comments => {
                     let html = '<ul>';
                     for (let c of comments) {
-                        // УЯЗВИМОСТЬ: вставляем комментарий напрямую в HTML
-                        html += '<li>' + c + '</li>';
+                        // Экранируем опасные символы
+                        let safe = c.replace(/&/g, '&amp;')
+                                    .replace(/</g, '&lt;')
+                                    .replace(/>/g, '&gt;')
+                                    .replace(/"/g, '&quot;')
+                                    .replace(/'/g, '&#039;');
+                        html += '<li>' + safe + '</li>';
                     }
                     html += '</ul>';
                     document.getElementById('comment-list').innerHTML = html;
                 });
         }
-
-        // Загружаем комментарии при загрузке страницы
         loadComments();
     </script>
 </body>
