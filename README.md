@@ -55,7 +55,15 @@ let safe = c.replace(/&/g, '&amp;')
     - `домены` (example.com)
     - `протоколы` (https:)
 
-#### Set-Cookie
+#### Strict-Transport-Security (HSTS)
+Указывает браузеру, что сайт должен доступен только по HTTPS, и автоматически преобразовывать все HTTP-ссылки в HTTPS. Это защищает от атак типа SSL Strip (понижение протокола)
+
+- `max-age` — время в секундах, в течение которого браузер должен помнить, что сайт доступен только по HTTPS (31536000 - 1 год)
+- `includeSubDomains` — применять правило ко всем поддоменам
+- `preload` — разрешает включить домен в список предзагрузки браузеров (HSTS preload list)
+
+### Cookie
+Set-Cookie
 Устанавливает cookie (куку) в браузере, которая будет отправляться серверу при последующих запросах
 
 Флаги:
@@ -70,6 +78,15 @@ let safe = c.replace(/&/g, '&amp;')
 - `Path` – ограничивает путь на сервере, для которого отправляется cookie
 - `Domain` – задаёт домен, для которого действует cookie (по умолчанию – только текущий)
 
+У Flask есть подписанные куки для сессий. Пример:
+```python
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,      
+    SESSION_COOKIE_SECURE=False,       
+    SESSION_COOKIE_SAMESITE='Lax',     
+    PERMANENT_SESSION_LIFETIME=3600,   # Сессия живёт 1 час
+)
+```
 
 ### Хэширование-паролей
 Хранить в открытом виде пароль плохо, кто угодно может прочитать код и спарсить конфиденциальную информацию.
@@ -172,3 +189,47 @@ csrf_token = secrets.token_urlsafe(16)
         self.wfile.write(b'CSRF token mismatch')
         return
 ```
+
+### DataBase
+Теперь данные хранятся в базе, а не в памяти
+
+Хранить данные в коде плохо - создадим переменную окружения `.env`
+```text
+DB_DSN = "dbname=websec_db user=websec_user password=websec_pass host=localhost"
+```
+
+И загрузим данную конфигурацию
+```python
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+app.secret_key = os.getenv('SECRET_KEY', secrets.token_hex(32))
+DB_DSN = os.getenv('DB_DSN')
+```
+
+### SQLi
+Появилась база данных, а значит возможны sql-инъекции — защищаемся через использование параметрических запросов, то есть вместо подстановки значений в строку запроса (что опасно) использую параметризованные запросы библиотеки psycopg2. Значения передаются отдельно, и драйвер экранирует их
+
+```python
+import psycopg2
+from psycopg2.extras import RealDictCursor
+
+def get_db_connection():
+    return psycopg2.connect(DB_DSN, cursor_factory=RealDictCursor)
+
+# Пример безопасной вставки
+cur.execute(
+    "INSERT INTO users (username, password_hash) VALUES (%s, %s)",
+    (username, password_hash)
+)
+
+# Пример безопасного SELECT
+cur.execute(
+    "SELECT id, username FROM users WHERE username = %s AND password_hash = %s",
+    (username, password_hash)
+)
+```
+Значения %s заменяются на переданные аргументы, при этом драйвер автоматически экранирует специальные символы. Злоумышленник не сможет «сбежать» из строки и выполнить свой SQL-код
+
+
